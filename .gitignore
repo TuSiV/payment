@@ -5,3 +5,4 @@ dist
 .venv-img
 src-tauri/target
 source
+src-tauri/resources/libreoffice

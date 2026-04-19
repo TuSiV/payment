@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>函件生成器 - 图标生成器</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 40px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 30px;
+        }
+        h1 {
+            color: white;
+            margin: 0;
+            font-size: 28px;
+            font-weight: 600;
+        }
+        .container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 30px;
+            justify-content: center;
+            align-items: flex-start;
+        }
+        .icon-card {
+            background: white;
+            border-radius: 20px;
+            padding: 25px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 15px;
+        }
+        .icon-card h3 {
+            margin: 0;
+            color: #333;
+            font-size: 14px;
+            font-weight: 500;
+        }
+        canvas {
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        }
+        button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px 30px;
+            border-radius: 10px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 20px rgba(102, 126, 234, 0.4);
+        }
+    </style>
+</head>
+<body>
+    <h1>函件生成器 - 应用图标</h1>
+    <div class="container">
+        <div class="icon-card">
+            <canvas id="icon512" width="512" height="512"></canvas>
+            <h3>512x512</h3>
+        </div>
+        <div class="icon-card">
+            <canvas id="icon256" width="256" height="256"></canvas>
+            <h3>256x256</h3>
+        </div>
+        <div class="icon-card">
+            <canvas id="icon128" width="128" height="128"></canvas>
+            <h3>128x128</h3>
+        </div>
+        <div class="icon-card">
+            <canvas id="icon64" width="64" height="64"></canvas>
+            <h3>64x64</h3>
+        </div>
+    </div>
+    <button onclick="downloadIcons()">下载所有图标</button>
+
+    <script>
+        function drawIcon(canvas, size) {
+            const ctx = canvas.getContext('2d');
+            const center = size / 2;
+            const scale = size / 512;
+
+            ctx.clearRect(0, 0, size, size);
+
+            ctx.save();
+            const radius = 70 * scale;
+            ctx.beginPath();
+            ctx.moveTo(radius, 0);
+            ctx.arcTo(size, 0, size, size, radius);
+            ctx.arcTo(size, size, 0, size, radius);
+            ctx.arcTo(0, size, 0, 0, radius);
+            ctx.arcTo(0, 0, size, 0, radius);
+            ctx.closePath();
+            const gradient = ctx.createLinearGradient(0, 0, size, size);
+            gradient.addColorStop(0, '#667eea');
+            gradient.addColorStop(1, '#764ba2');
+            ctx.fillStyle = gradient;
+            ctx.fill();
+
+            const docX = 120 * scale;
+            const docY = 110 * scale;
+            const docW = 160 * scale;
+            const docH = 210 * scale;
+            
+            ctx.fillStyle = '#ffffff';
+            ctx.shadowColor = 'rgba(0,0,0,0.15)';
+            ctx.shadowBlur = 20 * scale;
+            ctx.shadowOffsetX = 0;
+            ctx.shadowOffsetY = 6 * scale;
+            roundRect(ctx, docX, docY, docW, docH, 8 * scale);
+            ctx.fill();
+            ctx.shadowBlur = 0;
+
+            ctx.strokeStyle = 'rgba(102, 126, 234, 0.3)';
+            ctx.lineWidth = 3 * scale;
+            for (let i = 0; i < 4; i++) {
+                ctx.beginPath();
+                ctx.moveTo(docX + 20 * scale, docY + 45 * scale + i * 35 * scale);
+                ctx.lineTo(docX + docW - 20 * scale, docY + 45 * scale + i * 35 * scale);
+                ctx.stroke();
+            }
+
+            ctx.fillStyle = 'rgba(102, 126, 234, 0.8)';
+            ctx.beginPath();
+            ctx.moveTo(docX + docW, docY);
+            ctx.lineTo(docX + docW - 40 * scale, docY);
+            ctx.lineTo(docX + docW, docY + 40 * scale);
+            ctx.closePath();
+            ctx.fill();
+
+            const sheetX = 240 * scale;
+            const sheetY = 170 * scale;
+            const sheetW = 150 * scale;
+            const sheetH = 180 * scale;
+
+            ctx.fillStyle = '#f0f4ff';
+            ctx.shadowColor = 'rgba(0,0,0,0.2)';
+            ctx.shadowBlur = 25 * scale;
+            ctx.shadowOffsetX = 3 * scale;
+            ctx.shadowOffsetY = 8 * scale;
+            roundRect(ctx, sheetX, sheetY, sheetW, sheetH, 8 * scale);
+            ctx.fill();
+            ctx.shadowBlur = 0;
+
+            ctx.strokeStyle = 'rgba(102, 126, 234, 0.25)';
+            ctx.lineWidth = 2 * scale;
+            
+            for (let i = 0; i < 5; i++) {
+                ctx.beginPath();
+                ctx.moveTo(sheetX, sheetY + 30 * scale + i * 30 * scale);
+                ctx.lineTo(sheetX + sheetW, sheetY + 30 * scale + i * 30 * scale);
+                ctx.stroke();
+            }
+            
+            ctx.beginPath();
+            ctx.moveTo(sheetX + 45 * scale, sheetY);
+            ctx.lineTo(sheetX + 45 * scale, sheetY + sheetH);
+            ctx.moveTo(sheetX + 90 * scale, sheetY);
+            ctx.lineTo(sheetX + 90 * scale, sheetY + sheetH);
+            ctx.stroke();
+
+            ctx.fillStyle = '#667eea';
+            roundRect(ctx, sheetX + 8 * scale, sheetY + 8 * scale, 30 * scale, 16 * scale, 4 * scale);
+            ctx.fill();
+            ctx.fillStyle = '#764ba2';
+            roundRect(ctx, sheetX + 55 * scale, sheetY + 8 * scale, 30 * scale, 16 * scale, 4 * scale);
+            ctx.fill();
+
+            ctx.restore();
+        }
+
+        function roundRect(ctx, x, y, width, height, radius) {
+            ctx.beginPath();
+            ctx.moveTo(x + radius, y);
+            ctx.lineTo(x + width - radius, y);
+            ctx.quadraticCurveTo(x + width, y, x + width, y + radius);
+            ctx.lineTo(x + width, y + height - radius);
+            ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+            ctx.lineTo(x + radius, y + height);
+            ctx.quadraticCurveTo(x, y + height, x, y + height - radius);
+            ctx.lineTo(x, y + radius);
+            ctx.quadraticCurveTo(x, y, x + radius, y);
+            ctx.closePath();
+        }
+
+        function downloadIcons() {
+            const sizes = [512, 256, 128, 64, 32, 16];
+            sizes.forEach(size => {
+                const canvas = document.createElement('canvas');
+                canvas.width = size;
+                canvas.height = size;
+                drawIcon(canvas, size);
+                
+                const link = document.createElement('a');
+                link.download = `icon-${size}x${size}.png`;
+                link.href = canvas.toDataURL('image/png');
+                link.click();
+            });
+        }
+
+        drawIcon(document.getElementById('icon512'), 512);
+        drawIcon(document.getElementById('icon256'), 256);
+        drawIcon(document.getElementById('icon128'), 128);
+        drawIcon(document.getElementById('icon64'), 64);
+    </script>
+</body>
+</html>

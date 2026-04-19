@@ -1,0 +1,29 @@
+[package]
+name = "letter-generator"
+version = "0.1.0"
+description = "Tauri-based letter generator"
+authors = ["OpenAI Codex"]
+edition = "2021"
+
+[lib]
+name = "letter_generator_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.0.5", features = [] }
+
+[dependencies]
+anyhow = "1.0.95"
+calamine = "0.26.1"
+chrono = { version = "0.4.39", features = ["serde"] }
+dirs = "5.0.1"
+open = "5.3.2"
+regex = "1.11.1"
+serde = { version = "1.0.217", features = ["derive"] }
+serde_json = "1.0.138"
+tauri = { version = "2.2.5", features = [] }
+tauri-plugin-dialog = "2.2.1"
+tauri-plugin-opener = "2.2.2"
+thiserror = "2.0.11"
+walkdir = "2.5.0"
+zip = { version = "2.2.2", default-features = false, features = ["deflate"] }
