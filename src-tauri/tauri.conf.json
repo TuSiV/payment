@@ -29,7 +29,9 @@
       "nsis",
       "dmg"
     ],
-    "resources": [],
+    "resources": [
+      "resources/libreoffice/**/*"
+    ],
     "icon": [
       "icons/icon.png"
     ],

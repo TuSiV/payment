@@ -29,6 +29,16 @@ jobs:
       - name: Install Frontend Dependencies
         run: npm install
 
+      - name: Install and Prepare LibreOffice
+        shell: pwsh
+        run: |
+          choco install libreoffice-still -y --no-progress
+          $targetDir = "src-tauri/resources/libreoffice"
+          if (!(Test-Path $targetDir)) { New-Item -ItemType Directory -Force -Path $targetDir }
+          $librePath = "C:\Program Files\LibreOffice"
+          Write-Host "Copying LibreOffice from $librePath to $targetDir ..."
+          Copy-Item -Path "$librePath\*" -Destination $targetDir -Recurse -Force
+
       - name: Build Tauri App
         uses: tauri-apps/tauri-action@v0
         env:
