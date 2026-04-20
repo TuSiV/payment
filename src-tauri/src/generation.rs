@@ -144,41 +144,63 @@ fn resolve_replacements(
     values
 }
 
-fn libreoffice_binary(base_resource_dir: &Path) -> Option<PathBuf> {
+fn libreoffice_binary(_base_resource_dir: &Path) -> Option<PathBuf> {
     let binary_name = if cfg!(target_os = "windows") {
         "soffice.exe"
     } else {
         "soffice"
     };
-    let candidates = vec![
-        base_resource_dir.join("resources/libreoffice/program").join(binary_name),
-        base_resource_dir.join("libreoffice/program").join(binary_name),
-        base_resource_dir.join("../resources/libreoffice/program").join(binary_name),
-    ];
     
-    // 尝试系统路径
-    if let Ok(output) = std::process::Command::new("which").arg(binary_name).output() {
-        if output.status.success() {
-            if let Ok(path_str) = std::str::from_utf8(&output.stdout) {
-                let system_path = PathBuf::from(path_str.trim());
-                if system_path.exists() {
-                    println!("Found LibreOffice in system path: {}", system_path.display());
-                    return Some(system_path);
+    // Windows: 尝试在系统PATH中查找
+    if cfg!(target_os = "windows") {
+        if let Ok(output) = std::process::Command::new("where")
+            .arg(binary_name)
+            .output() {
+            if output.status.success() {
+                if let Ok(path_str) = std::str::from_utf8(&output.stdout) {
+                    let first_line = path_str.lines().next().unwrap_or("").trim();
+                    if !first_line.is_empty() {
+                        let system_path = PathBuf::from(first_line);
+                        if system_path.exists() {
+                            println!("Found LibreOffice in system PATH: {}", system_path.display());
+                            return Some(system_path);
+                        }
+                    }
+                }
+            }
+        }
+    } else {
+        // macOS/Linux: 使用 which 命令
+        if let Ok(output) = std::process::Command::new("which")
+            .arg(binary_name)
+            .output() {
+            if output.status.success() {
+                if let Ok(path_str) = std::str::from_utf8(&output.stdout) {
+                    let system_path = PathBuf::from(path_str.trim());
+                    if system_path.exists() {
+                        println!("Found LibreOffice in system PATH: {}", system_path.display());
+                        return Some(system_path);
+                    }
                 }
             }
         }
     }
     
-    // 打印所有候选路径，便于调试
-    println!("Looking for LibreOffice in:");
-    for path in &candidates {
-        println!("  {} (exists: {})", path.display(), path.exists());
-        if path.exists() {
-            return Some(path.clone());
+    // macOS: 尝试默认安装路径
+    if cfg!(target_os = "macos") {
+        let macos_candidates = vec![
+            PathBuf::from("/Applications/LibreOffice.app/Contents/MacOS/soffice"),
+            PathBuf::from("/Applications/LibreOffice.app/Contents/MacOS/soffice.bin"),
+        ];
+        for path in &macos_candidates {
+            if path.exists() {
+                println!("Found LibreOffice at: {}", path.display());
+                return Some(path.clone());
+            }
         }
     }
     
-    println!("Failed to find LibreOffice");
+    println!("LibreOffice not found in system PATH");
     None
 }
 
