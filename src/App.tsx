@@ -70,16 +70,16 @@ const defaultSettings: AppSettings = {
   recentDataSourcePaths: [],
   bankMappings: [
     {
-      key: "中国船舶集团物资有限公司",
-      accountName: "中国船舶集团物资有限公司",
-      accountNumber: "1600090101029",
-      bankName: "中船财务有限责任公司北京分公司"
+      key: "A公司",
+      accountName: "A公司",
+      accountNumber: "1000000000000",
+      bankName: "中国银行"
     },
     {
-      key: "中船重工物资贸易集团有限公司",
-      accountName: "中船重工物资贸易集团有限公司",
-      accountNumber: "1601610101014",
-      bankName: "中船财务有限责任公司北京分公司"
+      key: "B公司",
+      accountName: "B公司",
+      accountNumber: "10000000000000",
+      bankName: "中国银行"
     }
   ]
 };
@@ -810,7 +810,7 @@ function App() {
                     name="key"
                     value={bankMappingForm.key}
                     onChange={handleBankMappingFormChange}
-                    placeholder="例如：中国船舶集团物资有限公司"
+                    placeholder="例如：A公司"
                   />
                 </label>
                 <label className="field">

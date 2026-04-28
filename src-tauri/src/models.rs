@@ -69,16 +69,16 @@ impl Default for AppSettings {
             recent_data_source_paths: Vec::new(),
             bank_mappings: vec![
                 BankMapping {
-                    key: "中国船舶集团物资有限公司".into(),
-                    account_name: "中国船舶集团物资有限公司".into(),
-                    account_number: "1600090101029".into(),
-                    bank_name: "中船财务有限责任公司北京分公司".into(),
+                    key: "A公司".into(),
+                    account_name: "A公司".into(),
+                    account_number: "1000000000000".into(),
+                    bank_name: "中国银行".into(),
                 },
                 BankMapping {
-                    key: "中船重工物资贸易集团有限公司".into(),
-                    account_name: "中船重工物资贸易集团有限公司".into(),
-                    account_number: "1601610101014".into(),
-                    bank_name: "中船财务有限责任公司北京分公司".into(),
+                    key: "B公司".into(),
+                    account_name: "B公司".into(),
+                    account_number: "10000000000000".into(),
+                    bank_name: "中国银行".into(),
                 },
             ],
         }
