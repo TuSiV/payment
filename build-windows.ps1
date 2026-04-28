@@ -1,4 +1,4 @@
-﻿# Windows构建脚本
+﻿﻿﻿﻿# Windows构建脚本
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host "  Tauri Windows 构建脚本" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
