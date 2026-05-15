@@ -7,6 +7,8 @@ mod template;
 
 use std::path::{Path, PathBuf};
 
+use std::collections::HashMap;
+
 use models::{
     AppSettings, ExcelInspectionResult, GenerationPreview, GenerationResult, GenerationRule,
     PlaceholderBinding, TemplateInspectionResult,
@@ -48,8 +50,9 @@ fn preview_generation(
     file_path: String,
     bindings: Vec<PlaceholderBinding>,
     rule: GenerationRule,
+    manual_rows: Option<Vec<HashMap<String, String>>>,
 ) -> Result<GenerationPreview, String> {
-    generation::preview_generation(&template_path, &file_path, &bindings, &rule).map_err(String::from)
+    generation::preview_generation(&template_path, &file_path, &bindings, &rule, manual_rows).map_err(String::from)
 }
 
 #[tauri::command]
@@ -59,6 +62,7 @@ fn generate_letters(
     file_path: String,
     bindings: Vec<PlaceholderBinding>,
     rule: GenerationRule,
+    manual_rows: Option<Vec<HashMap<String, String>>>,
 ) -> Result<GenerationResult, String> {
     let settings = settings::load_settings().map_err(String::from)?;
     generation::generate_letters(
@@ -68,6 +72,7 @@ fn generate_letters(
         &file_path,
         &bindings,
         &rule,
+        manual_rows,
     )
     .map_err(String::from)
 }

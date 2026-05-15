@@ -19,7 +19,7 @@ const stepOrder: StepId[] = ["template", "data", "mapping", "generate"];
 
 const stepMeta: Record<StepId, { title: string; kicker: string }> = {
   template: { title: "导入函件模板", kicker: "Step 1" },
-  data: { title: "导入数据源", kicker: "Step 2" },
+  data: { title: "导入数据源 / 添加数据", kicker: "Step 2" },
   mapping: { title: "配置关键词和规则", kicker: "Step 3" },
   generate: { title: "生成并导出", kicker: "Step 4" }
 };
@@ -31,8 +31,9 @@ const helpContent: Record<StepId, string[]> = {
     "如果没有识别到关键词，仍可继续，但最终函件不会替换动态内容。"
   ],
   data: [
-    "选择 Excel 后可切换工作表，并预览前几行数据。",
-    "如果你的列名与模板关键词不同，下一步可以手动映射。",
+    "支持两种数据来源：导入 Excel 文件或在软件内手动填写。",
+    "手动填写时可从 Excel 复制数据直接粘贴，支持整行、整列或多行多列区域。",
+    "粘贴数据只保留文本值，行和列会自动扩展以匹配数据量。",
     "分组生成默认会按客户名称、填报单位、客户类型聚合。"
   ],
   mapping: [
@@ -103,6 +104,12 @@ function App() {
     accountNumber: "",
     bankName: ""
   });
+
+  const [dataSourceMode, setDataSourceMode] = useState<"excel" | "manual">("excel");
+  const [manualColumns, setManualColumns] = useState<string[]>(["填报单位", "客户名称", "账面余额"]);
+  const [manualRows, setManualRows] = useState<Record<string, string>[]>([]);
+  const [editingColIndex, setEditingColIndex] = useState<number | null>(null);
+  const [focusedCell, setFocusedCell] = useState<{ row: number; col: number } | null>(null);
 
   useEffect(() => {
     invoke<AppSettings>("load_settings")
@@ -231,7 +238,8 @@ function App() {
         templatePath: templateInfo.templatePath,
         filePath: excelInfo.filePath,
         bindings,
-        rule
+        rule,
+        manualRows: dataSourceMode === "manual" && manualRows.length > 0 ? manualRows : null
       });
       setPreview(nextPreview);
       setCurrentStep("generate");
@@ -253,7 +261,8 @@ function App() {
         templatePath: templateInfo.templatePath,
         filePath: excelInfo.filePath,
         bindings,
-        rule
+        rule,
+        manualRows: dataSourceMode === "manual" && manualRows.length > 0 ? manualRows : null
       });
       setResult(generated);
     } catch (generationError) {
@@ -409,64 +418,283 @@ function App() {
 
             {currentStep === "data" ? (
               <div className="stack">
-                <button className="hero-dropzone" onClick={chooseExcel}>
-                  <span className="eyebrow">Excel 数据源</span>
-                  <strong>选择 .xlsx 或 .xls 文件</strong>
-                  <span>读取工作表、表头和前几行预览</span>
-                </button>
-                {excelInfo ? (
-                  <div className="summary-card">
-                    <h3>{excelInfo.filePath}</h3>
-                    <p>共 {excelInfo.sheets.length} 个工作表，当前默认选择 {rule.sheetName}</p>
-                    <label className="field">
-              <span>工作表</span>
-              <select
-                value={rule.sheetName}
-                onChange={async (event) => {
-                  const newSheetName = event.target.value;
-                  setBusyMessage("正在解析工作表...");
-                  setError(null);
-                  
-                  try {
-                    // 重新解析指定工作表的数据
-                    const reInspected = await invoke<ExcelInspectionResult>("inspect_sheet", {
-                      filePath: excelInfo.filePath,
-                      sheetName: newSheetName
-                    });
-                    
-                    // 更新excelInfo和规则
-                    setExcelInfo(reInspected);
-                    setRule((current) => ({ ...current, sheetName: newSheetName }));
-                  } catch (err) {
-                    setError(String(err));
-                  } finally {
-                    setBusyMessage(null);
-                  }
-                }}
-              >
-                {excelInfo.sheets.map((sheet) => (
-                  <option key={sheet} value={sheet}>
-                    {sheet}
-                  </option>
-                ))}
-              </select>
-            </label>
-                    <div className="preview-table">
-                      <div className="table-head">
-                        {excelInfo.columns.map((column) => (
-                          <span key={column}>{column}</span>
-                        ))}
-                      </div>
-                      {excelInfo.previewRows.map((row, index) => (
-                        <div className="table-row" key={index}>
-                          {excelInfo.columns.map((column) => (
-                            <span key={column}>{row[column] ?? ""}</span>
+                <div className="data-source-toggle">
+                  <button
+                    className={`toggle-button ${dataSourceMode === "excel" ? "active" : ""}`}
+                    onClick={() => {
+                      setDataSourceMode("excel");
+                      setManualRows([]);
+                      setManualColumns(["填报单位", "客户名称", "账面余额"]);
+                      setExcelInfo(null);
+                    }}
+                  >
+                    导入 Excel
+                  </button>
+                  <button
+                    className={`toggle-button ${dataSourceMode === "manual" ? "active" : ""}`}
+                    onClick={() => {
+                      setDataSourceMode("manual");
+                      setExcelInfo(null);
+                    }}
+                  >
+                    手动填写
+                  </button>
+                </div>
+
+                {dataSourceMode === "excel" ? (
+                  <>
+                    <button className="hero-dropzone" onClick={chooseExcel}>
+                      <span className="eyebrow">Excel 数据源</span>
+                      <strong>选择 .xlsx 或 .xls 文件</strong>
+                      <span>读取工作表、表头和前几行预览</span>
+                    </button>
+                    {excelInfo ? (
+                      <div className="summary-card">
+                        <h3>{excelInfo.filePath}</h3>
+                        <p>共 {excelInfo.sheets.length} 个工作表，当前默认选择 {rule.sheetName}</p>
+                        <label className="field">
+                          <span>工作表</span>
+                          <select
+                            value={rule.sheetName}
+                            onChange={async (event) => {
+                              const newSheetName = event.target.value;
+                              setBusyMessage("正在解析工作表...");
+                              setError(null);
+                              try {
+                                const reInspected = await invoke<ExcelInspectionResult>("inspect_sheet", {
+                                  filePath: excelInfo.filePath,
+                                  sheetName: newSheetName
+                                });
+                                setExcelInfo(reInspected);
+                                setRule((current) => ({ ...current, sheetName: newSheetName }));
+                              } catch (err) {
+                                setError(String(err));
+                              } finally {
+                                setBusyMessage(null);
+                              }
+                            }}
+                          >
+                            {excelInfo.sheets.map((sheet) => (
+                              <option key={sheet} value={sheet}>
+                                {sheet}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <div className="preview-table">
+                          <div className="table-head">
+                            {excelInfo.columns.map((column) => (
+                              <span key={column}>{column}</span>
+                            ))}
+                          </div>
+                          {excelInfo.previewRows.map((row, index) => (
+                            <div className="table-row" key={index}>
+                              {excelInfo.columns.map((column) => (
+                                <span key={column}>{row[column] ?? ""}</span>
+                              ))}
+                            </div>
                           ))}
                         </div>
-                      ))}
+                      </div>
+                    ) : null}
+                  </>
+                ) : (
+                  <>
+                    <div
+                      className="summary-card"
+                      onPaste={(e) => {
+                        const text = e.clipboardData.getData("text/plain");
+                        if (!text) return;
+                        e.preventDefault();
+
+                        const parsed = text.split(/\r?\n/).filter((line) => line.length > 0);
+                        const grid = parsed.map((line) => line.split("\t"));
+
+                        const startRow = focusedCell?.row ?? 0;
+                        const startCol = focusedCell?.col ?? 0;
+
+                        const pasteRows = grid.length;
+                        const pasteCols = Math.max(...grid.map((r) => r.length));
+
+                        // Expand columns if needed
+                        let currentCols = [...manualColumns];
+                        const neededCols = startCol + pasteCols;
+                        if (neededCols > currentCols.length) {
+                          for (let i = currentCols.length; i < neededCols; i++) {
+                            currentCols.push(`新列${i + 1}`);
+                          }
+                          setManualColumns(currentCols);
+                        }
+
+                        // Expand rows if needed
+                        let currentRows = [...manualRows];
+                        const neededRows = startRow + pasteRows;
+                        if (neededRows > currentRows.length) {
+                          for (let i = currentRows.length; i < neededRows; i++) {
+                            const emptyRow: Record<string, string> = {};
+                            currentCols.forEach((col) => (emptyRow[col] = ""));
+                            currentRows.push(emptyRow);
+                          }
+                        }
+
+                        // Fill values
+                        for (let r = 0; r < pasteRows; r++) {
+                          for (let c = 0; c < grid[r].length; c++) {
+                            const targetRow = startRow + r;
+                            const targetCol = startCol + c;
+                            if (targetRow < currentRows.length && targetCol < currentCols.length) {
+                              currentRows[targetRow] = {
+                                ...currentRows[targetRow],
+                                [currentCols[targetCol]]: grid[r][c]
+                              };
+                            }
+                          }
+                        }
+
+                        setManualRows(currentRows);
+                        // Move focus to end of pasted region
+                        setFocusedCell({ row: startRow + pasteRows, col: startCol });
+                      }}
+                    >
+                      <h3>手动填写数据</h3>
+                      <p className="manual-table-hint">支持直接输入，也可从 Excel 复制粘贴数据（自动扩展行列）</p>
+
+                      <div className="manual-table-container" style={{ "--col-count": manualColumns.length } as React.CSSProperties}>
+                        {/* Table header */}
+                        <div className="manual-table-head">
+                          <span />
+                          {manualColumns.map((col, colIdx) => (
+                            <div className="col-header" key={colIdx}>
+                              {editingColIndex === colIdx ? (
+                                <input
+                                  className="col-name"
+                                  autoFocus
+                                  value={col}
+                                  onChange={(e) => {
+                                    const newName = e.target.value;
+                                    setManualColumns((prev) => prev.map((c, i) => (i === colIdx ? newName : c)));
+                                  }}
+                                  onBlur={() => setEditingColIndex(null)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter" || e.key === "Escape") setEditingColIndex(null);
+                                  }}
+                                />
+                              ) : (
+                                <span className="col-name" onDoubleClick={() => setEditingColIndex(colIdx)}>
+                                  {col}
+                                </span>
+                              )}
+                              {manualColumns.length > 1 && (
+                                <button
+                                  className="delete-col-btn"
+                                  title="删除此列"
+                                  onClick={() => {
+                                    const removedCol = manualColumns[colIdx];
+                                    setManualColumns((prev) => prev.filter((_, i) => i !== colIdx));
+                                    setManualRows((prev) =>
+                                      prev.map((row) => {
+                                        const next = { ...row };
+                                        delete next[removedCol];
+                                        return next;
+                                      })
+                                    );
+                                  }}
+                                >
+                                  ×
+                                </button>
+                              )}
+                            </div>
+                          ))}
+                          <button
+                            className="delete-col-btn"
+                            style={{ opacity: 0, cursor: "default" }}
+                            tabIndex={-1}
+                          />
+                        </div>
+
+                        {/* Data rows */}
+                        {manualRows.length === 0 ? (
+                          <div style={{ textAlign: "center", padding: "20px", color: "var(--text-soft)" }}>
+                            暂无数据，点击下方"添加行"开始输入，或从 Excel 复制粘贴
+                          </div>
+                        ) : (
+                          manualRows.map((row, rowIdx) => (
+                            <div className="manual-table-row" key={rowIdx}>
+                              <button
+                                className="delete-row-btn"
+                                title="删除此行"
+                                onClick={() => {
+                                  setManualRows((prev) => prev.filter((_, i) => i !== rowIdx));
+                                }}
+                              >
+                                ×
+                              </button>
+                              {manualColumns.map((col, colIdx) => (
+                                <input
+                                  key={colIdx}
+                                  value={row[col] ?? ""}
+                                  onFocus={() => setFocusedCell({ row: rowIdx, col: colIdx })}
+                                  onChange={(e) => {
+                                    const val = e.target.value;
+                                    setManualRows((prev) =>
+                                      prev.map((r, i) => (i === rowIdx ? { ...r, [col]: val } : r))
+                                    );
+                                  }}
+                                />
+                              ))}
+                              <span />
+                            </div>
+                          ))
+                        )}
+                      </div>
+
+                      <div className="manual-table-actions">
+                        <button
+                          className="add-row-btn"
+                          onClick={() => {
+                            const emptyRow: Record<string, string> = {};
+                            manualColumns.forEach((col) => (emptyRow[col] = ""));
+                            setManualRows((prev) => [...prev, emptyRow]);
+                          }}
+                        >
+                          + 添加行
+                        </button>
+                        <button
+                          className="add-col-btn"
+                          onClick={() => {
+                            const newColName = `新列${manualColumns.length + 1}`;
+                            setManualColumns((prev) => [...prev, newColName]);
+                            setManualRows((prev) => prev.map((row) => ({ ...row, [newColName]: "" })));
+                          }}
+                        >
+                          + 添加列
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                ) : null}
+
+                    {manualRows.length > 0 && (
+                      <div className="action-row">
+                        <button
+                          className="primary-button"
+                          onClick={() => {
+                            // Build ExcelInspectionResult from manual data
+                            const result: ExcelInspectionResult = {
+                              filePath: "",
+                              sheets: ["手动输入"],
+                              columns: manualColumns,
+                              previewRows: manualRows
+                            };
+                            setExcelInfo(result);
+                            setRule((current) => ({ ...current, sheetName: "手动输入" }));
+                            setCurrentStep("mapping");
+                          }}
+                        >
+                          确认数据并继续
+                        </button>
+                      </div>
+                    )}
+                  </>
+                )}
               </div>
             ) : null}
 

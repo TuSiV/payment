@@ -209,8 +209,12 @@ pub fn preview_generation(
     file_path: &str,
     bindings: &[PlaceholderBinding],
     rule: &GenerationRule,
+    manual_rows: Option<Vec<HashMap<String, String>>>,
 ) -> Result<GenerationPreview, AppError> {
-    let rows = load_sheet_rows(file_path, &rule.sheet_name)?;
+    let rows = match manual_rows {
+        Some(rows) if !rows.is_empty() => rows,
+        _ => load_sheet_rows(file_path, &rule.sheet_name)?,
+    };
     let grouped = build_grouped_rows(&rows, rule);
     let missing = missing_bindings(bindings);
     let serial_number = rule.start_number as usize;
@@ -242,6 +246,7 @@ pub fn generate_letters(
     file_path: &str,
     bindings: &[PlaceholderBinding],
     rule: &GenerationRule,
+    manual_rows: Option<Vec<HashMap<String, String>>>,
 ) -> Result<GenerationResult, AppError> {
     let missing = missing_bindings(bindings);
     if !missing.is_empty() {
@@ -251,7 +256,10 @@ pub fn generate_letters(
         )));
     }
 
-    let rows = load_sheet_rows(file_path, &rule.sheet_name)?;
+    let rows = match manual_rows {
+        Some(rows) if !rows.is_empty() => rows,
+        _ => load_sheet_rows(file_path, &rule.sheet_name)?,
+    };
     let grouped = build_grouped_rows(&rows, rule);
     let output_dir = resolve_output_dir(rule, template_path)?;
     let mut failures = Vec::new();
