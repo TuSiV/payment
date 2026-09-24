@@ -6,3 +6,5 @@ dist
 src-tauri/target
 source
 src-tauri/resources/libreoffice
+.worktrees
+docs/

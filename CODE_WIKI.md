@@ -163,8 +163,8 @@ flowchart TD
 |-------|------|------|-------|
 | `inspect_word_template()` | 解析 Word 模板中的占位符 | template_path: String | Result<TemplateInspectionResult, String> |
 | `inspect_excel_source()` | 解析 Excel 数据源 | file_path: String | Result<ExcelInspectionResult, String> |
-| `preview_generation()` | 预览生成结果 | template_path, file_path, bindings, rule | Result<GenerationPreview, String> |
-| `generate_letters()` | 生成函件 | resource_dir, settings, template_path, file_path, bindings, rule | Result<GenerationResult, String> |
+| `preview_generation()` | 预览生成结果 | template_path, file_path, bindings, rule, manual_rows, settings | Result<GenerationPreview, String> |
+| `generate_letters()` | 生成函件 | resource_dir, settings, template_path, file_path, bindings, rule, manual_rows | Result<GenerationResult, String> |
 | `convert_to_pdf()` | 将 Word 文档转换为 PDF | resource_dir, target_docx, output_dir | Result<(), AppError> |
 
 ## 6. 数据模型
@@ -175,7 +175,7 @@ flowchart TD
 |---------|------|------|
 | `TemplateInspectionResult` | 模板检查结果 | templatePath: string, placeholders: string[], placeholderSyntaxes: PlaceholderSyntax[] |
 | `ExcelInspectionResult` | Excel 检查结果 | filePath: string, sheets: string[], columns: string[], previewRows: Record<string, string>[] |
-| `PlaceholderBinding` | 占位符绑定 | placeholder: string, sourceType: BindingSourceType, sourceValue: string |
+| `PlaceholderBinding` | 占位符绑定 | placeholder: string, sourceType: BindingSourceType, sourceValue: string（system/config 为语义 key） |
 | `GenerationRule` | 生成规则 | mode: GenerationMode, sheetName: string, groupByFields: string[], sumFields: string[], startNumber: number, letterNumberTemplate: string, fileNameTemplate: string, dateValue: string, exportPdf: boolean, outputDir?: string |
 | `GenerationPreview` | 生成预览 | totalInputRows: number, totalLetters: number, sampleFileName: string, missingBindings: string[] |
 | `GenerationResult` | 生成结果 | totalInputRows: number, totalLetters: number, docxSuccessCount: number, pdfSuccessCount: number, failures: GenerationFailure[], outputDir: string |
@@ -184,7 +184,9 @@ flowchart TD
 
 | 模型名称 | 描述 | 字段 |
 |---------|------|------|
-| `AppSettings` | 应用设置 | helpWidgetPinned: bool, helpWidgetCollapsed: bool, recentTemplatePaths: Vec<String>, recentDataSourcePaths: Vec<String>, bankMappings: Vec<BankMapping> |
+| `AppSettings` | 应用设置 | helpWidgetPinned, helpWidgetCollapsed, recentTemplatePaths, recentDataSourcePaths, onboardingCompleted, profile: ProfileDefaults, fieldVocabulary: FieldVocabulary, bankMappings |
+| `ProfileDefaults` | 业务模板默认 | letterNumberTemplate, fileNameTemplate, startNumber, exportPdf |
+| `FieldVocabulary` | 字段词表 | systemVariables(4 语义槽), configFields(3 槽), bankLookupColumn, defaultGroupByFields, defaultSumFields, defaultManualColumns |
 | `BankMapping` | 银行映射 | key: String, accountName: String, accountNumber: String, bankName: String |
 | `GenerationFailure` | 生成失败 | target: String, reason: String |
 
@@ -254,11 +256,12 @@ flowchart TD
 
 ### 9.1 基本流程
 
-1. **导入模板**：点击 "选择 .docx 函件模板" 按钮，选择 Word 模板文件
-2. **导入数据**：点击 "选择 .xlsx 或 .xls 文件" 按钮，选择 Excel 数据源
-3. **配置映射**：为模板中的每个占位符选择数据源（Excel 列、系统变量、固定文本或配置映射值）
-4. **预览结果**：点击 "预览生成结果" 按钮，查看预计生成的函件数量和文件名示例
-5. **生成函件**：点击 "开始生成函件" 按钮，生成函件并导出
+1. **首次配置**：启动后完成向导（函号/文件名模板、字段词表、银行映射）
+2. **导入模板**：点击 "选择 .docx 函件模板" 按钮，选择 Word 模板文件
+3. **导入数据**：导入 Excel，或在「手动填写」中输入/粘贴数据
+4. **配置映射**：为模板中的每个占位符选择数据源（数据列、系统变量、固定文本或配置映射值）
+5. **预览结果**：点击 "预览生成结果" 按钮，查看预计生成的函件数量和文件名示例
+6. **生成函件**：点击 "开始生成函件" 按钮，生成函件并导出
 
 ### 9.2 高级功能
 
@@ -292,39 +295,21 @@ flowchart TD
 
 ## 11. 扩展与定制
 
-### 11.1 添加新的系统变量
+### 11.1 调整系统变量 / 配置映射词面
 
-在前端 `App.tsx` 文件中，修改 `systemOptions` 数组，添加新的系统变量：
+语义槽位固定（系统变量：`letter_number` / `date` / `current_year` / `serial`；配置映射：`account_name` / `account_number` / `bank_name`），**token 词面**在应用「设置 / 向导」的字段词表中修改，无需改代码。
 
-```typescript
-const systemOptions = ["函号", "日期", "当前年份", "序号", "新变量"];
-```
+绑定 `sourceValue` 存上述稳定 key，不存中文词面。
 
-在后端 `generation.rs` 文件中，修改 `resolve_replacements` 函数，添加新的系统变量处理：
+### 11.2 新增语义槽位（需改代码）
 
-```rust
-values.insert("新变量".into(), "新变量值".into());
-```
+若要增加新的系统变量或配置映射槽位：
 
-### 11.2 添加新的配置映射值
+1. 扩展 `SystemVariableKey` / `ConfigFieldKey`（`models.rs` + `types.ts`）
+2. 在 `generation.rs` 的 `system_value` / `config_value` / `expand_letter_number` / `validate_generation_inputs` 补齐计算与校验
+3. 前端 `SYSTEM_KEYS` / `CONFIG_KEYS` 与设置表单补一项
 
-在前端 `App.tsx` 文件中，修改 `configOptions` 数组，添加新的配置映射值：
-
-```typescript
-const configOptions = ["户名", "账号", "开户行", "新配置"];
-```
-
-在后端 `generation.rs` 文件中，修改 `config_value` 函数，添加新的配置映射值处理：
-
-```rust
-match (found, field) {
-    (Some(mapping), "户名") => mapping.account_name.clone(),
-    (Some(mapping), "账号") => mapping.account_number.clone(),
-    (Some(mapping), "开户行") => mapping.bank_name.clone(),
-    (Some(mapping), "新配置") => mapping.new_config.clone(),
-    _ => String::new(),
-}
-```
+禁止用中文魔法字符串匹配生成语义。
 
 ### 11.3 自定义生成模式
 
