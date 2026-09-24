@@ -50,6 +50,106 @@ pub struct BankMapping {
     pub bank_name: String,
 }
 
+/// 固定语义系统变量；token 为模板/绑定中的词面，由用户配置。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SystemVariableKey {
+    LetterNumber,
+    Date,
+    CurrentYear,
+    Serial,
+}
+
+/// 固定槽位配置映射字段；token 为绑定下拉中的词面，由用户配置。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ConfigFieldKey {
+    AccountName,
+    AccountNumber,
+    BankName,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SystemVariableDef {
+    pub key: SystemVariableKey,
+    pub token: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfigFieldDef {
+    pub key: ConfigFieldKey,
+    pub token: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FieldVocabulary {
+    #[serde(default)]
+    pub system_variables: Vec<SystemVariableDef>,
+    #[serde(default)]
+    pub config_fields: Vec<ConfigFieldDef>,
+    #[serde(default)]
+    pub bank_lookup_column: String,
+    #[serde(default)]
+    pub default_group_by_fields: Vec<String>,
+    #[serde(default)]
+    pub default_sum_fields: Vec<String>,
+    #[serde(default)]
+    pub default_manual_columns: Vec<String>,
+}
+
+impl Default for FieldVocabulary {
+    fn default() -> Self {
+        Self {
+            system_variables: vec![
+                SystemVariableDef { key: SystemVariableKey::LetterNumber, token: String::new() },
+                SystemVariableDef { key: SystemVariableKey::Date, token: String::new() },
+                SystemVariableDef { key: SystemVariableKey::CurrentYear, token: String::new() },
+                SystemVariableDef { key: SystemVariableKey::Serial, token: String::new() },
+            ],
+            config_fields: vec![
+                ConfigFieldDef { key: ConfigFieldKey::AccountName, token: String::new() },
+                ConfigFieldDef { key: ConfigFieldKey::AccountNumber, token: String::new() },
+                ConfigFieldDef { key: ConfigFieldKey::BankName, token: String::new() },
+            ],
+            bank_lookup_column: String::new(),
+            default_group_by_fields: Vec::new(),
+            default_sum_fields: Vec::new(),
+            default_manual_columns: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileDefaults {
+    #[serde(default)]
+    pub letter_number_template: String,
+    #[serde(default)]
+    pub file_name_template: String,
+    #[serde(default = "default_start_number")]
+    pub start_number: u32,
+    #[serde(default)]
+    pub export_pdf: bool,
+}
+
+fn default_start_number() -> u32 {
+    1
+}
+
+impl Default for ProfileDefaults {
+    fn default() -> Self {
+        Self {
+            letter_number_template: String::new(),
+            file_name_template: String::new(),
+            start_number: default_start_number(),
+            export_pdf: false,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
@@ -57,6 +157,13 @@ pub struct AppSettings {
     pub help_widget_collapsed: bool,
     pub recent_template_paths: Vec<String>,
     pub recent_data_source_paths: Vec<String>,
+    /// 首次启动引导向导是否完成；旧配置缺省视为 false。
+    #[serde(default)]
+    pub onboarding_completed: bool,
+    #[serde(default)]
+    pub profile: ProfileDefaults,
+    #[serde(default)]
+    pub field_vocabulary: FieldVocabulary,
     pub bank_mappings: Vec<BankMapping>,
 }
 
@@ -67,20 +174,10 @@ impl Default for AppSettings {
             help_widget_collapsed: false,
             recent_template_paths: Vec::new(),
             recent_data_source_paths: Vec::new(),
-            bank_mappings: vec![
-                BankMapping {
-                    key: "A公司".into(),
-                    account_name: "A公司".into(),
-                    account_number: "1000000000000".into(),
-                    bank_name: "中国银行".into(),
-                },
-                BankMapping {
-                    key: "B公司".into(),
-                    account_name: "B公司".into(),
-                    account_number: "10000000000000".into(),
-                    bank_name: "中国银行".into(),
-                },
-            ],
+            onboarding_completed: false,
+            profile: ProfileDefaults::default(),
+            field_vocabulary: FieldVocabulary::default(),
+            bank_mappings: Vec::new(),
         }
     }
 }
@@ -132,4 +229,38 @@ pub struct GenerationResult {
     pub pdf_success_count: usize,
     pub failures: Vec<GenerationFailure>,
     pub output_dir: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_settings_have_no_sensitive_seeds() {
+        let settings = AppSettings::default();
+        assert!(settings.bank_mappings.is_empty());
+        assert!(settings.profile.letter_number_template.is_empty());
+        assert!(!settings.onboarding_completed);
+        let json = serde_json::to_string(&settings).unwrap();
+        assert!(!json.contains("船物法函"));
+        assert!(!json.contains("A公司"));
+        assert!(!json.contains("1000000000000"));
+    }
+
+    #[test]
+    fn legacy_settings_json_loads_with_empty_profile() {
+        let legacy = r#"{
+            "helpWidgetPinned": true,
+            "helpWidgetCollapsed": false,
+            "recentTemplatePaths": [],
+            "recentDataSourcePaths": [],
+            "bankMappings": [{"key":"旧客户","accountName":"旧户名","accountNumber":"1","bankName":"某行"}]
+        }"#;
+        let settings: AppSettings = serde_json::from_str(legacy).unwrap();
+        assert!(!settings.onboarding_completed);
+        assert!(settings.profile.letter_number_template.is_empty());
+        assert_eq!(settings.bank_mappings.len(), 1);
+        assert_eq!(settings.bank_mappings[0].key, "旧客户");
+        assert_eq!(settings.field_vocabulary.system_variables.len(), 4);
+    }
 }

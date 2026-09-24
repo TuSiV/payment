@@ -4,12 +4,19 @@ import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useMemo, useState } from "react";
 import type {
   AppSettings,
+  BankMapping,
   BindingSourceType,
+  ConfigFieldDef,
+  ConfigFieldKey,
   ExcelInspectionResult,
+  FieldVocabulary,
   GenerationPreview,
   GenerationResult,
   GenerationRule,
   PlaceholderBinding,
+  ProfileDefaults,
+  SystemVariableDef,
+  SystemVariableKey,
   TemplateInspectionResult
 } from "./lib/types";
 
@@ -27,70 +34,186 @@ const stepMeta: Record<StepId, { title: string; kicker: string }> = {
 const helpContent: Record<StepId, string[]> = {
   template: [
     "选择 .docx 模板后，系统会自动解析正文、表格、页眉和页脚中的关键词。",
-    "推荐使用 {{客户名称}} 这类占位符，也兼容旧格式 %客户名称%。",
-    "如果没有识别到关键词，仍可继续，但最终函件不会替换动态内容。"
+    "推荐使用 {{关键词}} 这类占位符，也兼容旧格式 %关键词%。",
+    "系统变量与配置映射的词面名称在「设置」中维护，不在代码里写死。"
   ],
   data: [
     "支持两种数据来源：导入 Excel 文件或在软件内手动填写。",
     "手动填写时可从 Excel 复制数据直接粘贴，支持整行、整列或多行多列区域。",
-    "粘贴数据只保留文本值，行和列会自动扩展以匹配数据量。",
-    "分组生成默认会按客户名称、填报单位、客户类型聚合。"
+    "手填默认列来自设置中的字段词表。"
   ],
   mapping: [
-    "每个关键词都可以映射到 Excel 列、系统变量、固定文本或配置映射值。",
-    "系统变量适合函号、日期、年份、序号。",
-    "配置映射值适合按填报单位自动带出户名、账号、开户行。"
+    "每个关键词都可以映射到数据列、系统变量、固定文本或配置映射值。",
+    "系统变量与配置映射的可选项来自设置中的字段词表。",
+    "使用配置映射前需维护银行映射，并设置银行查找列。"
   ],
   generate: [
-    "生成时会先导出 DOCX，如勾选 PDF 会再调用内置 LibreOffice 转换。",
+    "生成时会先导出 DOCX，如勾选 PDF 会再调用本机 LibreOffice 转换。",
     "可以自定义输出目录；不选择时将自动生成时间戳目录。",
-    "即使部分 PDF 转换失败，已生成的 DOCX 也会保留。"
+    "预览与生成前会校验函号模板、文件名模板和映射配置是否完整。"
   ]
 };
 
-const systemOptions = ["函号", "日期", "当前年份", "序号"];
-const configOptions = ["户名", "账号", "开户行"];
+const SYSTEM_KEY_LABELS: Record<SystemVariableKey, string> = {
+  letter_number: "函号/文号",
+  date: "日期",
+  current_year: "当前年份",
+  serial: "序号"
+};
 
-const defaultRule = (): GenerationRule => ({
-  mode: "grouped",
-  sheetName: "",
-  groupByFields: ["客户名称", "填报单位", "客户类型"],
-  sumFields: ["账面余额"],
-  startNumber: 1,
-  letterNumberTemplate: "船物法函〔{{当前年份}}〕{{序号}}号",
-  fileNameTemplate: "{{函号}}_{{填报单位}}_{{客户名称}}.docx",
-  dateValue: new Date().toISOString().slice(0, 10),
-  exportPdf: true,
-  outputDir: null
-});
+const CONFIG_KEY_LABELS: Record<ConfigFieldKey, string> = {
+  account_name: "户名",
+  account_number: "账号",
+  bank_name: "开户行"
+};
 
-const defaultSettings: AppSettings = {
-  helpWidgetPinned: true,
-  helpWidgetCollapsed: false,
-  recentTemplatePaths: [],
-  recentDataSourcePaths: [],
-  bankMappings: [
-    {
-      key: "A公司",
-      accountName: "A公司",
-      accountNumber: "1000000000000",
-      bankName: "中国银行"
+const SYSTEM_KEYS: SystemVariableKey[] = ["letter_number", "date", "current_year", "serial"];
+const CONFIG_KEYS: ConfigFieldKey[] = ["account_name", "account_number", "bank_name"];
+
+function emptyFieldVocabulary(): FieldVocabulary {
+  return {
+    systemVariables: SYSTEM_KEYS.map((key) => ({ key, token: "" })),
+    configFields: CONFIG_KEYS.map((key) => ({ key, token: "" })),
+    bankLookupColumn: "",
+    defaultGroupByFields: [],
+    defaultSumFields: [],
+    defaultManualColumns: []
+  };
+}
+
+function emptyProfile(): ProfileDefaults {
+  return {
+    letterNumberTemplate: "",
+    fileNameTemplate: "",
+    startNumber: 1,
+    exportPdf: false
+  };
+}
+
+function emptySettings(): AppSettings {
+  return {
+    helpWidgetPinned: true,
+    helpWidgetCollapsed: false,
+    recentTemplatePaths: [],
+    recentDataSourcePaths: [],
+    onboardingCompleted: false,
+    profile: emptyProfile(),
+    fieldVocabulary: emptyFieldVocabulary(),
+    bankMappings: []
+  };
+}
+
+function normalizeSettings(raw: AppSettings): AppSettings {
+  const base = emptySettings();
+  return {
+    ...base,
+    ...raw,
+    profile: { ...base.profile, ...(raw.profile ?? {}) },
+    fieldVocabulary: {
+      ...base.fieldVocabulary,
+      ...(raw.fieldVocabulary ?? {}),
+      systemVariables: SYSTEM_KEYS.map((key) => {
+        const found = raw.fieldVocabulary?.systemVariables?.find((item) => item.key === key);
+        return { key, token: found?.token ?? "" };
+      }),
+      configFields: CONFIG_KEYS.map((key) => {
+        const found = raw.fieldVocabulary?.configFields?.find((item) => item.key === key);
+        return { key, token: found?.token ?? "" };
+      }),
+      defaultGroupByFields: raw.fieldVocabulary?.defaultGroupByFields ?? [],
+      defaultSumFields: raw.fieldVocabulary?.defaultSumFields ?? [],
+      defaultManualColumns: raw.fieldVocabulary?.defaultManualColumns ?? []
     },
-    {
-      key: "B公司",
-      accountName: "B公司",
-      accountNumber: "10000000000000",
-      bankName: "中国银行"
+    bankMappings: raw.bankMappings ?? []
+  };
+}
+
+function ruleFromProfile(profile: ProfileDefaults, vocabulary: FieldVocabulary): GenerationRule {
+  return {
+    mode: "grouped",
+    sheetName: "",
+    groupByFields: [...vocabulary.defaultGroupByFields],
+    sumFields: [...vocabulary.defaultSumFields],
+    startNumber: profile.startNumber || 1,
+    letterNumberTemplate: profile.letterNumberTemplate,
+    fileNameTemplate: profile.fileNameTemplate,
+    dateValue: new Date().toISOString().slice(0, 10),
+    exportPdf: profile.exportPdf,
+    outputDir: null
+  };
+}
+
+function parseList(value: string): string[] {
+  return value
+    .split(/[,，\n]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function validateConfig(settings: AppSettings, bindings: PlaceholderBinding[], rule: GenerationRule): string | null {
+  if (!rule.letterNumberTemplate.trim()) {
+    return "函号模板未配置，请在设置中填写后重试";
+  }
+  if (!rule.fileNameTemplate.trim()) {
+    return "文件名模板未配置，请在设置中填写后重试";
+  }
+  for (const binding of bindings) {
+    if (!binding.sourceValue.trim()) {
+      continue;
     }
-  ]
-};
+    if (binding.sourceType === "system") {
+      const def = settings.fieldVocabulary.systemVariables.find((item) => item.key === binding.sourceValue);
+      if (!def) {
+        return `系统变量绑定「${binding.placeholder}」使用了未知标识`;
+      }
+      if (!def.token.trim()) {
+        return `系统变量 token 未配置，无法解析「${binding.placeholder}」`;
+      }
+    }
+    if (binding.sourceType === "config") {
+      const def = settings.fieldVocabulary.configFields.find((item) => item.key === binding.sourceValue);
+      if (!def) {
+        return `配置映射绑定「${binding.placeholder}」使用了未知标识`;
+      }
+      if (!def.token.trim()) {
+        return `配置映射 token 未配置，无法解析「${binding.placeholder}」`;
+      }
+      if (!settings.fieldVocabulary.bankLookupColumn.trim()) {
+        return "银行查找列未配置，请在设置的字段词表中填写";
+      }
+      if (settings.bankMappings.length === 0) {
+        return "配置映射为空，请先在设置中维护银行映射";
+      }
+    }
+  }
+  return null;
+}
+
+function onboardingIssues(settings: AppSettings): string[] {
+  const issues: string[] = [];
+  if (!settings.profile.letterNumberTemplate.trim()) issues.push("函号模板");
+  if (!settings.profile.fileNameTemplate.trim()) issues.push("文件名模板");
+  if (settings.fieldVocabulary.systemVariables.some((item) => !item.token.trim())) {
+    issues.push("系统变量 token");
+  }
+  if (settings.fieldVocabulary.configFields.some((item) => !item.token.trim())) {
+    issues.push("配置映射 token");
+  }
+  return issues;
+}
+
+type OnboardingStep = "profile" | "vocabulary" | "bank" | "done";
 
 function App() {
   const [currentStep, setCurrentStep] = useState<StepId>("template");
-  const [settings, setSettings] = useState<AppSettings>(defaultSettings);
+  const [settings, setSettings] = useState<AppSettings>(emptySettings);
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
+  const [showOnboarding, setShowOnboarding] = useState(false);
+  const [onboardingStep, setOnboardingStep] = useState<OnboardingStep>("profile");
+  const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [templateInfo, setTemplateInfo] = useState<TemplateInspectionResult | null>(null);
   const [excelInfo, setExcelInfo] = useState<ExcelInspectionResult | null>(null);
-  const [rule, setRule] = useState<GenerationRule>(defaultRule);
+  const [rule, setRule] = useState<GenerationRule>(() => ruleFromProfile(emptyProfile(), emptyFieldVocabulary()));
   const [bindings, setBindings] = useState<PlaceholderBinding[]>([]);
   const [preview, setPreview] = useState<GenerationPreview | null>(null);
   const [result, setResult] = useState<GenerationResult | null>(null);
@@ -106,15 +229,34 @@ function App() {
   });
 
   const [dataSourceMode, setDataSourceMode] = useState<"excel" | "manual">("excel");
-  const [manualColumns, setManualColumns] = useState<string[]>(["填报单位", "客户名称", "账面余额"]);
+  const [manualColumns, setManualColumns] = useState<string[]>([]);
   const [manualRows, setManualRows] = useState<Record<string, string>[]>([]);
   const [editingColIndex, setEditingColIndex] = useState<number | null>(null);
   const [focusedCell, setFocusedCell] = useState<{ row: number; col: number } | null>(null);
 
   useEffect(() => {
     invoke<AppSettings>("load_settings")
-      .then((loaded) => setSettings(loaded))
-      .catch(() => setSettings(defaultSettings));
+      .then((loaded) => {
+        const normalized = normalizeSettings(loaded);
+        setSettings(normalized);
+        setRule((current) => ({
+          ...ruleFromProfile(normalized.profile, normalized.fieldVocabulary),
+          sheetName: current.sheetName,
+          dateValue: current.dateValue,
+          outputDir: current.outputDir
+        }));
+        setManualColumns([...normalized.fieldVocabulary.defaultManualColumns]);
+        if (!normalized.onboardingCompleted) {
+          setShowOnboarding(true);
+          setOnboardingStep("profile");
+        }
+      })
+      .catch(() => {
+        setSettings(emptySettings());
+        setShowOnboarding(true);
+        setOnboardingStep("profile");
+      })
+      .finally(() => setSettingsLoaded(true));
   }, []);
 
   useEffect(() => {
@@ -122,30 +264,69 @@ function App() {
       return;
     }
     setBindings((current) => {
-        const next = templateInfo.placeholders.map((placeholder) => {
-          const existing = current.find((item) => item.placeholder === placeholder);
-          const exactColumn = excelInfo.columns.find((column) => column === placeholder);
-          if (existing) {
-            return existing;
-          }
-          const sourceType: BindingSourceType = exactColumn ? "excel" : "fixed";
-          return {
-            placeholder,
-            sourceType,
-            sourceValue: exactColumn ?? ""
-          };
-        });
+      const next = templateInfo.placeholders.map((placeholder) => {
+        const existing = current.find((item) => item.placeholder === placeholder);
+        const exactColumn = excelInfo.columns.find((column) => column === placeholder);
+        if (existing) {
+          return existing;
+        }
+        const sourceType: BindingSourceType = exactColumn ? "excel" : "fixed";
+        return {
+          placeholder,
+          sourceType,
+          sourceValue: exactColumn ?? ""
+        };
+      });
       return next;
     });
   }, [excelInfo, templateInfo]);
 
   async function persistSettings(next: AppSettings) {
-    setSettings(next);
+    const normalized = normalizeSettings(next);
+    setSettings(normalized);
     try {
-      await invoke("save_settings", { settings: next });
+      await invoke("save_settings", { settings: normalized });
     } catch (saveError) {
       console.error(saveError);
     }
+  }
+
+  function updateFieldVocabulary(patch: Partial<FieldVocabulary>) {
+    setSettings((current) => ({
+      ...current,
+      fieldVocabulary: { ...current.fieldVocabulary, ...patch }
+    }));
+  }
+
+  function updateProfile(patch: Partial<ProfileDefaults>) {
+    setSettings((current) => ({
+      ...current,
+      profile: { ...current.profile, ...patch }
+    }));
+  }
+
+  function updateSystemToken(key: SystemVariableKey, token: string) {
+    setSettings((current) => ({
+      ...current,
+      fieldVocabulary: {
+        ...current.fieldVocabulary,
+        systemVariables: current.fieldVocabulary.systemVariables.map((item: SystemVariableDef) =>
+          item.key === key ? { ...item, token } : item
+        )
+      }
+    }));
+  }
+
+  function updateConfigToken(key: ConfigFieldKey, token: string) {
+    setSettings((current) => ({
+      ...current,
+      fieldVocabulary: {
+        ...current.fieldVocabulary,
+        configFields: current.fieldVocabulary.configFields.map((item: ConfigFieldDef) =>
+          item.key === key ? { ...item, token } : item
+        )
+      }
+    }));
   }
 
   async function chooseTemplate() {
@@ -169,10 +350,7 @@ function App() {
       setPreview(null);
       await persistSettings({
         ...settings,
-        recentTemplatePaths: [path, ...settings.recentTemplatePaths.filter((item) => item !== path)].slice(
-          0,
-          5
-        )
+        recentTemplatePaths: [path, ...settings.recentTemplatePaths.filter((item) => item !== path)].slice(0, 5)
       });
     } catch (inspectError) {
       setError(String(inspectError));
@@ -204,10 +382,7 @@ function App() {
       setCurrentStep("mapping");
       await persistSettings({
         ...settings,
-        recentDataSourcePaths: [path, ...settings.recentDataSourcePaths.filter((item) => item !== path)].slice(
-          0,
-          5
-        )
+        recentDataSourcePaths: [path, ...settings.recentDataSourcePaths.filter((item) => item !== path)].slice(0, 5)
       });
     } catch (inspectError) {
       setError(String(inspectError));
@@ -231,6 +406,11 @@ function App() {
     if (!templateInfo || !excelInfo) {
       return;
     }
+    const configError = validateConfig(settings, bindings, rule);
+    if (configError) {
+      setError(configError);
+      return;
+    }
     setBusyMessage("正在预估生成结果...");
     setError(null);
     try {
@@ -252,6 +432,11 @@ function App() {
 
   async function generateLetters() {
     if (!templateInfo || !excelInfo) {
+      return;
+    }
+    const configError = validateConfig(settings, bindings, rule);
+    if (configError) {
+      setError(configError);
       return;
     }
     setBusyMessage("正在生成函件...");
@@ -295,7 +480,7 @@ function App() {
 
   function handleBankMappingFormChange(e: React.ChangeEvent<HTMLInputElement>) {
     const { name, value } = e.target;
-    setBankMappingForm(prev => ({
+    setBankMappingForm((prev) => ({
       ...prev,
       [name]: value
     }));
@@ -307,13 +492,12 @@ function App() {
       return;
     }
 
-    let updatedMappings;
+    let updatedMappings: BankMapping[];
     if (editingBankMappingIndex !== null) {
       updatedMappings = [...settings.bankMappings];
       updatedMappings[editingBankMappingIndex] = bankMappingForm;
     } else {
-      // 检查是否已存在相同的key
-      if (settings.bankMappings.some(mapping => mapping.key === bankMappingForm.key)) {
+      if (settings.bankMappings.some((mapping) => mapping.key === bankMappingForm.key)) {
         alert("已存在相同的映射键，请使用不同的键");
         return;
       }
@@ -335,6 +519,37 @@ function App() {
     });
   }
 
+  function completeOnboarding() {
+    const issues = onboardingIssues(settings);
+    if (issues.length > 0) {
+      setError(`请先完成：${issues.join("、")}`);
+      return;
+    }
+    const next = { ...settings, onboardingCompleted: true };
+    persistSettings(next);
+    setRule((current) => ({
+      ...current,
+      letterNumberTemplate: next.profile.letterNumberTemplate,
+      fileNameTemplate: next.profile.fileNameTemplate,
+      startNumber: next.profile.startNumber || current.startNumber,
+      exportPdf: next.profile.exportPdf,
+      groupByFields: [...next.fieldVocabulary.defaultGroupByFields],
+      sumFields: [...next.fieldVocabulary.defaultSumFields]
+    }));
+    setManualColumns([...next.fieldVocabulary.defaultManualColumns]);
+    setShowOnboarding(false);
+    setError(null);
+  }
+
+  const systemOptions = useMemo(
+    () => settings.fieldVocabulary.systemVariables.filter((item) => item.token.trim()),
+    [settings.fieldVocabulary.systemVariables]
+  );
+  const configOptions = useMemo(
+    () => settings.fieldVocabulary.configFields.filter((item) => item.token.trim()),
+    [settings.fieldVocabulary.configFields]
+  );
+
   const stepReady = useMemo(
     () => ({
       template: Boolean(templateInfo),
@@ -347,6 +562,164 @@ function App() {
 
   const canPreview = templateInfo && excelInfo && bindings.every((item) => item.sourceValue.trim().length > 0);
 
+  function renderVocabularyFields() {
+    return (
+      <>
+        <div className="summary-card">
+          <h3>系统变量 token</h3>
+          <p className="manual-table-hint">用于 Word 占位符与绑定选项；语义固定，词面可改</p>
+          <div className="form-grid">
+            {SYSTEM_KEYS.map((key) => {
+              const def = settings.fieldVocabulary.systemVariables.find((item) => item.key === key)!;
+              return (
+                <label className="field" key={key}>
+                  <span>{SYSTEM_KEY_LABELS[key]}</span>
+                  <input
+                    value={def.token}
+                    onChange={(event) => updateSystemToken(key, event.target.value)}
+                    placeholder="在模板中显示的名称"
+                  />
+                </label>
+              );
+            })}
+          </div>
+        </div>
+        <div className="summary-card">
+          <h3>配置映射 token</h3>
+          <div className="form-grid">
+            {CONFIG_KEYS.map((key) => {
+              const def = settings.fieldVocabulary.configFields.find((item) => item.key === key)!;
+              return (
+                <label className="field" key={key}>
+                  <span>{CONFIG_KEY_LABELS[key]}</span>
+                  <input
+                    value={def.token}
+                    onChange={(event) => updateConfigToken(key, event.target.value)}
+                    placeholder="绑定下拉显示名"
+                  />
+                </label>
+              );
+            })}
+            <label className="field wide">
+              <span>银行查找列</span>
+              <input
+                value={settings.fieldVocabulary.bankLookupColumn}
+                onChange={(event) => updateFieldVocabulary({ bankLookupColumn: event.target.value })}
+                placeholder="数据源中用于匹配映射键的列名"
+              />
+            </label>
+          </div>
+        </div>
+        <div className="summary-card">
+          <h3>默认字段列表</h3>
+          <div className="form-grid">
+            <label className="field wide">
+              <span>默认分组字段</span>
+              <input
+                value={settings.fieldVocabulary.defaultGroupByFields.join(", ")}
+                onChange={(event) => updateFieldVocabulary({ defaultGroupByFields: parseList(event.target.value) })}
+                placeholder="逗号分隔"
+              />
+            </label>
+            <label className="field wide">
+              <span>默认求和字段</span>
+              <input
+                value={settings.fieldVocabulary.defaultSumFields.join(", ")}
+                onChange={(event) => updateFieldVocabulary({ defaultSumFields: parseList(event.target.value) })}
+                placeholder="逗号分隔"
+              />
+            </label>
+            <label className="field wide">
+              <span>手填默认列</span>
+              <input
+                value={settings.fieldVocabulary.defaultManualColumns.join(", ")}
+                onChange={(event) => updateFieldVocabulary({ defaultManualColumns: parseList(event.target.value) })}
+                placeholder="逗号分隔"
+              />
+            </label>
+          </div>
+        </div>
+      </>
+    );
+  }
+
+  function renderProfileFields() {
+    return (
+      <div className="summary-card">
+        <h3>文号与文件名</h3>
+        <div className="form-grid">
+          <label className="field wide">
+            <span>函号模板</span>
+            <input
+              value={settings.profile.letterNumberTemplate}
+              onChange={(event) => updateProfile({ letterNumberTemplate: event.target.value })}
+              placeholder="例如：〔{{当前年份}}〕{{序号}}号（token 以词表为准）"
+            />
+          </label>
+          <label className="field wide">
+            <span>文件名模板</span>
+            <input
+              value={settings.profile.fileNameTemplate}
+              onChange={(event) => updateProfile({ fileNameTemplate: event.target.value })}
+              placeholder="例如：{{函号}}_{{客户名称}}.docx"
+            />
+          </label>
+          <label className="field">
+            <span>起始序号</span>
+            <input
+              type="number"
+              value={settings.profile.startNumber}
+              onChange={(event) => updateProfile({ startNumber: Number(event.target.value) || 1 })}
+            />
+          </label>
+          <label className="field field-inline">
+            <span>默认导出 PDF</span>
+            <input
+              type="checkbox"
+              checked={settings.profile.exportPdf}
+              onChange={(event) => updateProfile({ exportPdf: event.target.checked })}
+            />
+          </label>
+        </div>
+      </div>
+    );
+  }
+
+  function renderBankManager() {
+    return (
+      <div className="summary-card">
+        <div className="flex-between">
+          <h3>配置映射值管理</h3>
+          <button className="ghost-button" onClick={() => setShowBankMappingModal(true)}>
+            添加映射
+          </button>
+        </div>
+        <p className="manual-table-hint">可暂不配置；使用「配置映射」绑定前必须维护</p>
+        <div className="bank-mapping-grid">
+          {settings.bankMappings.map((mapping, index) => (
+            <div key={mapping.key} className="bank-mapping-item">
+              <div className="bank-mapping-details">
+                <strong>{mapping.key}</strong>
+                <p>户名: {mapping.accountName}</p>
+                <p>账号: {mapping.accountNumber}</p>
+                <p>开户行: {mapping.bankName}</p>
+              </div>
+              <div className="bank-mapping-actions">
+                <button className="icon-button" onClick={() => handleEditBankMapping(index)}>
+                  编辑
+                </button>
+                <button className="icon-button danger" onClick={() => handleDeleteBankMapping(index)}>
+                  删除
+                </button>
+              </div>
+            </div>
+          ))}
+          {settings.bankMappings.length === 0 ? <p>暂无映射</p> : null}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -354,6 +727,9 @@ function App() {
           <p className="eyebrow">Letter Studio</p>
           <h1>函件生成器</h1>
           <p className="sidebar-copy">按模板、数据、规则、导出四步完成整批函件生成。</p>
+          <button className="ghost-button" onClick={() => setShowSettingsModal(true)}>
+            设置
+          </button>
         </div>
         <div className="step-list">
           {stepOrder.map((step) => (
@@ -424,7 +800,7 @@ function App() {
                     onClick={() => {
                       setDataSourceMode("excel");
                       setManualRows([]);
-                      setManualColumns(["填报单位", "客户名称", "账面余额"]);
+                      setManualColumns([...settings.fieldVocabulary.defaultManualColumns]);
                       setExcelInfo(null);
                     }}
                   >
@@ -516,7 +892,6 @@ function App() {
                         const pasteRows = grid.length;
                         const pasteCols = Math.max(...grid.map((r) => r.length));
 
-                        // Expand columns if needed
                         let currentCols = [...manualColumns];
                         const neededCols = startCol + pasteCols;
                         if (neededCols > currentCols.length) {
@@ -526,7 +901,6 @@ function App() {
                           setManualColumns(currentCols);
                         }
 
-                        // Expand rows if needed
                         let currentRows = [...manualRows];
                         const neededRows = startRow + pasteRows;
                         if (neededRows > currentRows.length) {
@@ -537,7 +911,6 @@ function App() {
                           }
                         }
 
-                        // Fill values
                         for (let r = 0; r < pasteRows; r++) {
                           for (let c = 0; c < grid[r].length; c++) {
                             const targetRow = startRow + r;
@@ -552,7 +925,6 @@ function App() {
                         }
 
                         setManualRows(currentRows);
-                        // Move focus to end of pasted region
                         setFocusedCell({ row: startRow + pasteRows, col: startCol });
                       }}
                     >
@@ -560,7 +932,6 @@ function App() {
                       <p className="manual-table-hint">支持直接输入，也可从 Excel 复制粘贴数据（自动扩展行列）</p>
 
                       <div className="manual-table-container" style={{ "--col-count": manualColumns.length } as React.CSSProperties}>
-                        {/* Table header */}
                         <div className="manual-table-head">
                           <span />
                           {manualColumns.map((col, colIdx) => (
@@ -612,10 +983,9 @@ function App() {
                           />
                         </div>
 
-                        {/* Data rows */}
                         {manualRows.length === 0 ? (
                           <div style={{ textAlign: "center", padding: "20px", color: "var(--text-soft)" }}>
-                            暂无数据，点击下方"添加行"开始输入，或从 Excel 复制粘贴
+                            暂无数据，点击下方“添加行”开始输入，或从 Excel 复制粘贴
                           </div>
                         ) : (
                           manualRows.map((row, rowIdx) => (
@@ -677,7 +1047,6 @@ function App() {
                         <button
                           className="primary-button"
                           onClick={() => {
-                            // Build ExcelInspectionResult from manual data
                             const result: ExcelInspectionResult = {
                               filePath: "",
                               sheets: ["手动输入"],
@@ -763,8 +1132,8 @@ function App() {
                           >
                             <option value="">选择系统变量</option>
                             {systemOptions.map((option) => (
-                              <option key={option} value={option}>
-                                {option}
+                              <option key={option.key} value={option.key}>
+                                {option.token}
                               </option>
                             ))}
                           </select>
@@ -784,8 +1153,8 @@ function App() {
                           >
                             <option value="">选择配置映射值</option>
                             {configOptions.map((option) => (
-                              <option key={option} value={option}>
-                                {option}
+                              <option key={option.key} value={option.key}>
+                                {option.token}
                               </option>
                             ))}
                           </select>
@@ -810,40 +1179,7 @@ function App() {
                   </div>
                 </div>
 
-                <div className="summary-card">
-                  <div className="flex-between">
-                    <h3>配置映射值管理</h3>
-                    <button className="ghost-button" onClick={() => setShowBankMappingModal(true)}>
-                      添加映射
-                    </button>
-                  </div>
-                  <div className="bank-mapping-grid">
-                    {settings.bankMappings.map((mapping, index) => (
-                      <div key={mapping.key} className="bank-mapping-item">
-                        <div className="bank-mapping-details">
-                          <strong>{mapping.key}</strong>
-                          <p>户名: {mapping.accountName}</p>
-                          <p>账号: {mapping.accountNumber}</p>
-                          <p>开户行: {mapping.bankName}</p>
-                        </div>
-                        <div className="bank-mapping-actions">
-                          <button 
-                            className="icon-button" 
-                            onClick={() => handleEditBankMapping(index)}
-                          >
-                            编辑
-                          </button>
-                          <button 
-                            className="icon-button danger" 
-                            onClick={() => handleDeleteBankMapping(index)}
-                          >
-                            删除
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
+                {renderBankManager()}
 
                 <div className="rule-grid">
                   <label className="field">
@@ -875,6 +1211,7 @@ function App() {
                       onChange={(event) =>
                         setRule((current) => ({ ...current, letterNumberTemplate: event.target.value }))
                       }
+                      placeholder="例如：〔{{当前年份}}〕{{序号}}号"
                     />
                   </label>
                   <label className="field wide">
@@ -884,6 +1221,7 @@ function App() {
                       onChange={(event) =>
                         setRule((current) => ({ ...current, fileNameTemplate: event.target.value }))
                       }
+                      placeholder="例如：{{函号}}_{{客户名称}}.docx"
                     />
                   </label>
                   <label className="field">
@@ -958,7 +1296,6 @@ function App() {
                         <strong>{result.outputDir}</strong>
                       </div>
                     </div>
-                    {/* 如果没有找到 PDF 转换工具但生成了 DOCX 文件，显示提示 */}
                     {rule.exportPdf && result.docxSuccessCount > 0 && result.pdfSuccessCount === 0 && result.failures.length === 0 ? (
                       <div className="info-banner">
                         <strong>提示：</strong>未找到 PDF 转换工具，只生成了 DOCX 文件。请安装 LibreOffice 或 unoconv 以启用 PDF 导出功能。
@@ -1020,6 +1357,110 @@ function App() {
         ) : null}
       </aside>
 
+      {(showOnboarding || showSettingsModal) && settingsLoaded ? (
+        <div className="modal-overlay" onClick={() => { if (showSettingsModal) setShowSettingsModal(false); }}>
+          <div className="modal-content onboarding-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>{showOnboarding ? "首次启动配置" : "应用设置"}</h3>
+              {showSettingsModal && !showOnboarding ? (
+                <button className="icon-button" onClick={() => setShowSettingsModal(false)}>
+                  关闭
+                </button>
+              ) : null}
+            </div>
+            <div className="modal-body">
+              {showOnboarding ? (
+                <div className="onboarding-steps">
+                  {(["profile", "vocabulary", "bank", "done"] as OnboardingStep[]).map((step, index) => (
+                    <span key={step} className={`onboarding-step ${onboardingStep === step ? "active" : ""}`}>
+                      {index + 1}. {step === "profile" ? "文号" : step === "vocabulary" ? "词表" : step === "bank" ? "银行映射" : "完成"}
+                    </span>
+                  ))}
+                </div>
+              ) : null}
+
+              {!showOnboarding || onboardingStep === "profile" ? renderProfileFields() : null}
+              {!showOnboarding || onboardingStep === "vocabulary" ? renderVocabularyFields() : null}
+              {!showOnboarding || onboardingStep === "bank" ? renderBankManager() : null}
+              {showOnboarding && onboardingStep === "done" ? (
+                <div className="summary-card">
+                  <h3>确认并开始</h3>
+                  <p>函号模板：{settings.profile.letterNumberTemplate || "（未填）"}</p>
+                  <p>文件名模板：{settings.profile.fileNameTemplate || "（未填）"}</p>
+                  <p>银行映射：{settings.bankMappings.length} 条（可稍后在设置中维护）</p>
+                  <p>提示：业务文号、账号等敏感信息仅保存在本机配置，请勿写入代码仓库。</p>
+                </div>
+              ) : null}
+            </div>
+            <div className="modal-footer">
+              {showOnboarding ? (
+                <>
+                  <button
+                    className="ghost-button"
+                    onClick={() => {
+                      const order: OnboardingStep[] = ["profile", "vocabulary", "bank", "done"];
+                      const idx = order.indexOf(onboardingStep);
+                      if (idx > 0) setOnboardingStep(order[idx - 1]);
+                    }}
+                    disabled={onboardingStep === "profile"}
+                  >
+                    上一步
+                  </button>
+                  {onboardingStep !== "done" ? (
+                    <button
+                      className="primary-button"
+                      onClick={() => {
+                        const order: OnboardingStep[] = ["profile", "vocabulary", "bank", "done"];
+                        const idx = order.indexOf(onboardingStep);
+                        if (onboardingStep === "profile") {
+                          if (!settings.profile.letterNumberTemplate.trim() || !settings.profile.fileNameTemplate.trim()) {
+                            setError("请填写函号模板与文件名模板");
+                            return;
+                          }
+                        }
+                        setOnboardingStep(order[idx + 1]);
+                        setError(null);
+                      }}
+                    >
+                      下一步
+                    </button>
+                  ) : (
+                    <button className="primary-button" onClick={completeOnboarding}>
+                      开始使用
+                    </button>
+                  )}
+                </>
+              ) : (
+                <>
+                  <button className="ghost-button" onClick={() => setShowSettingsModal(false)}>
+                    取消
+                  </button>
+                  <button
+                    className="primary-button"
+                    onClick={async () => {
+                      await persistSettings(settings);
+                      setRule((current) => ({
+                        ...current,
+                        letterNumberTemplate: settings.profile.letterNumberTemplate,
+                        fileNameTemplate: settings.profile.fileNameTemplate,
+                        startNumber: settings.profile.startNumber || current.startNumber,
+                        exportPdf: settings.profile.exportPdf,
+                        groupByFields: [...settings.fieldVocabulary.defaultGroupByFields],
+                        sumFields: [...settings.fieldVocabulary.defaultSumFields]
+                      }));
+                      setManualColumns([...settings.fieldVocabulary.defaultManualColumns]);
+                      setShowSettingsModal(false);
+                    }}
+                  >
+                    保存设置
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {showBankMappingModal && (
         <div className="modal-overlay" onClick={handleCloseBankMappingModal}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
@@ -1038,7 +1479,7 @@ function App() {
                     name="key"
                     value={bankMappingForm.key}
                     onChange={handleBankMappingFormChange}
-                    placeholder="例如：A公司"
+                    placeholder="与银行查找列的值一致"
                   />
                 </label>
                 <label className="field">
@@ -1078,17 +1519,12 @@ function App() {
                 取消
               </button>
               <button className="primary-button" onClick={handleBankMappingSubmit}>
-                {editingBankMappingIndex !== null ? "保存修改" : "添加映射"}
+                保存
               </button>
             </div>
           </div>
         </div>
       )}
-      
-      {/* 版权声明 */}
-      <div className="copyright">
-        <p>© 2026 Yongzhe Chen. All rights reserved.</p>
-      </div>
     </div>
   );
 }

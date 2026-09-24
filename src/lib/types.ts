@@ -28,11 +28,43 @@ export interface BankMapping {
   bankName: string;
 }
 
+export type SystemVariableKey = "letter_number" | "date" | "current_year" | "serial";
+export type ConfigFieldKey = "account_name" | "account_number" | "bank_name";
+
+export interface SystemVariableDef {
+  key: SystemVariableKey;
+  token: string;
+}
+
+export interface ConfigFieldDef {
+  key: ConfigFieldKey;
+  token: string;
+}
+
+export interface FieldVocabulary {
+  systemVariables: SystemVariableDef[];
+  configFields: ConfigFieldDef[];
+  bankLookupColumn: string;
+  defaultGroupByFields: string[];
+  defaultSumFields: string[];
+  defaultManualColumns: string[];
+}
+
+export interface ProfileDefaults {
+  letterNumberTemplate: string;
+  fileNameTemplate: string;
+  startNumber: number;
+  exportPdf: boolean;
+}
+
 export interface AppSettings {
   helpWidgetPinned: boolean;
   helpWidgetCollapsed: boolean;
   recentTemplatePaths: string[];
   recentDataSourcePaths: string[];
+  onboardingCompleted: boolean;
+  profile: ProfileDefaults;
+  fieldVocabulary: FieldVocabulary;
   bankMappings: BankMapping[];
 }
 

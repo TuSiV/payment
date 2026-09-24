@@ -52,7 +52,9 @@ fn preview_generation(
     rule: GenerationRule,
     manual_rows: Option<Vec<HashMap<String, String>>>,
 ) -> Result<GenerationPreview, String> {
-    generation::preview_generation(&template_path, &file_path, &bindings, &rule, manual_rows).map_err(String::from)
+    let settings = settings::load_settings().map_err(String::from)?;
+    generation::preview_generation(&template_path, &file_path, &bindings, &rule, manual_rows, &settings)
+        .map_err(String::from)
 }
 
 #[tauri::command]
