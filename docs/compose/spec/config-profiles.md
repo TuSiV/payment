@@ -3,7 +3,7 @@ feature: config-profiles
 status: delivered
 updated: 2026-05-15
 branch: feat/config-profiles
-commits: 2c92982..<short-head-sha>
+commits: 2c92982..29f202d
 ---
 
 # 可配置完全体（去硬编码敏感信息）
